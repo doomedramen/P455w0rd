@@ -49,9 +49,6 @@ struct Args {
     #[arg(long)]
     quiet: bool,
 
-    /// Quick mode: fewer l33t variants, focus on 8-24 character passwords
-    #[arg(long)]
-    quick: bool,
 
     /// Append to output file instead of overwriting
     #[arg(long)]
@@ -61,11 +58,9 @@ struct Args {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
-    // Set length constraints for WPA2 or quick mode
+    // Set length constraints for WPA2
     let (min_len, max_len) = if args.wpa2 {
         (8, 63)
-    } else if args.quick {
-        (8, 24)
     } else {
         (args.min_length, args.max_length)
     };
@@ -81,7 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Processing {} words...", words.len());
 
     // Generate and write combinations incrementally
-    let count = generate_combinations_streaming(&words, min_len, max_len, args.limit, &args.output, args.chunk_size, args.quiet, args.quick, args.append)?;
+    let count = generate_combinations_streaming(&words, min_len, max_len, args.limit, &args.output, args.chunk_size, args.quiet, args.append)?;
 
     println!("Generated {} passwords to {}", count, args.output);
 
@@ -126,7 +121,6 @@ fn generate_combinations_streaming(
     output_file: &str,
     chunk_size: usize,
     quiet: bool,
-    quick_mode: bool,
     append: bool,
 ) -> Result<usize, Box<dyn std::error::Error>> {
 
@@ -149,7 +143,7 @@ fn generate_combinations_streaming(
     // Create l33t variants for each word
     let word_variants: Vec<Vec<String>> = words
         .iter()
-        .map(|word| if quick_mode { create_quick_variants(word) } else { create_word_variants(word) })
+        .map(|word| create_word_variants(word))
         .collect();
 
     // Estimate total combinations for progress calculation
@@ -212,43 +206,17 @@ fn generate_combinations_streaming(
     Ok(total_count)
 }
 
-fn create_quick_variants(word: &str) -> Vec<String> {
-    let mut variants = Vec::new();
-
-    // Original word (lowercase)
-    variants.push(word.to_lowercase());
-
-    // Capitalize first letter
-    let capitalized = capitalize_first(word);
-    variants.push(capitalized);
-
-    // All uppercase
-    variants.push(word.to_uppercase());
-
-    // Simple l33t replacements (only common ones)
-    let simple_leet = create_simple_leet_variants(word);
-    variants.extend(simple_leet);
-
-    // Remove duplicates
-    variants.sort();
-    variants.dedup();
-    variants
-}
-
-fn capitalize_first(word: &str) -> String {
-    let mut chars = word.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(first) => first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase(),
-    }
-}
-
-fn create_simple_leet_variants(word: &str) -> Vec<String> {
+fn create_word_variants(word: &str) -> Vec<String> {
     let mut variants = Vec::new();
     let lower = word.to_lowercase();
 
-    // Only the most common l33t replacements
-    let simple_replacements = [
+    // Original word in different cases
+    variants.push(lower.clone());
+    variants.push(capitalize_word(&lower));
+    variants.push(word.to_uppercase());
+
+    // Basic l33t variants - only most common single replacements
+    let replacements = [
         ('a', '4'),
         ('e', '3'),
         ('i', '1'),
@@ -257,75 +225,18 @@ fn create_simple_leet_variants(word: &str) -> Vec<String> {
         ('s', '5'),
     ];
 
-    for &(from, to) in &simple_replacements {
+    for &(from, to) in &replacements {
         if lower.contains(from) {
-            let replaced = lower.replace(from, &to.to_string());
-            variants.push(replaced.clone());
-
-            // Also add capitalized version
-            variants.push(capitalize_first(&replaced));
+            let leet = lower.replace(from, &to.to_string());
+            variants.push(leet.clone());
+            variants.push(capitalize_word(&leet));
+            variants.push(leet.to_uppercase());
         }
-    }
-
-    variants
-}
-
-fn create_word_variants(word: &str) -> Vec<String> {
-    let mut variants = Vec::new();
-
-    // Get all l33t variants first (these are lowercase)
-    let leet_variants = create_leet_variants(word);
-
-    // For each l33t variant, create all capitalization patterns
-    for leet_word in &leet_variants {
-        // Add all capitalization variants of this l33t version
-        variants.extend(create_capitalization_variants(leet_word));
     }
 
     // Remove duplicates
     variants.sort();
     variants.dedup();
-    variants
-}
-
-fn create_capitalization_variants(word: &str) -> Vec<String> {
-    let mut variants = Vec::new();
-    let chars: Vec<char> = word.chars().collect();
-
-    if chars.is_empty() {
-        return variants;
-    }
-
-    // All combinations of case changes for alphabetic characters
-    let alpha_positions: Vec<usize> = chars
-        .iter()
-        .enumerate()
-        .filter(|(_, &ch)| ch.is_alphabetic())
-        .map(|(i, _)| i)
-        .collect();
-
-    if alpha_positions.is_empty() {
-        variants.push(word.to_string());
-        return variants;
-    }
-
-    // Generate all possible case combinations using bit patterns
-    let max_combinations = 1 << alpha_positions.len();
-
-    for combination in 0..max_combinations {
-        let mut variant_chars = chars.clone();
-
-        for (bit_pos, &char_pos) in alpha_positions.iter().enumerate() {
-            if (combination >> bit_pos) & 1 == 1 {
-                variant_chars[char_pos] = variant_chars[char_pos].to_uppercase().next().unwrap_or(variant_chars[char_pos]);
-            } else {
-                variant_chars[char_pos] = variant_chars[char_pos].to_lowercase().next().unwrap_or(variant_chars[char_pos]);
-            }
-        }
-
-        variants.push(variant_chars.iter().collect());
-    }
-
     variants
 }
 
@@ -335,64 +246,6 @@ fn capitalize_word(word: &str) -> String {
         chars[0] = chars[0].to_uppercase().next().unwrap_or(chars[0]);
     }
     chars.into_iter().collect()
-}
-
-fn create_leet_variants(word: &str) -> Vec<String> {
-    let leet_map: HashMap<char, Vec<char>> = [
-        ('a', vec!['@', '4']),
-        ('e', vec!['3']),
-        ('i', vec!['1', '!']),
-        ('l', vec!['1', '!']),
-        ('o', vec!['0']),
-        ('s', vec!['5', '$']),
-        ('t', vec!['7']),
-        ('g', vec!['9']),
-        ('b', vec!['6']),
-        ('z', vec!['2']),
-    ].iter().cloned().collect();
-
-    let mut all_variants = Vec::new();
-    let chars: Vec<char> = word.to_lowercase().chars().collect();
-
-    // Generate all possible combinations recursively
-    generate_all_leet_combinations(&chars, 0, String::new(), &leet_map, &mut all_variants);
-
-    // Remove duplicates and empty strings
-    all_variants.retain(|s| !s.is_empty());
-    all_variants.sort();
-    all_variants.dedup();
-    all_variants
-}
-
-fn generate_all_leet_combinations(
-    chars: &[char],
-    pos: usize,
-    current: String,
-    leet_map: &HashMap<char, Vec<char>>,
-    results: &mut Vec<String>,
-) {
-    if pos >= chars.len() {
-        results.push(current);
-        return;
-    }
-
-    let ch = chars[pos];
-
-    // Always try the original character
-    generate_all_leet_combinations(chars, pos + 1, current.clone() + &ch.to_string(), leet_map, results);
-
-    // Try all l33t replacements for this character
-    if let Some(replacements) = leet_map.get(&ch) {
-        for &replacement in replacements {
-            generate_all_leet_combinations(
-                chars,
-                pos + 1,
-                current.clone() + &replacement.to_string(),
-                leet_map,
-                results,
-            );
-        }
-    }
 }
 
 fn generate_cartesian_product(
