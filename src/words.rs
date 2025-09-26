@@ -1,4 +1,5 @@
 use crate::args::Args;
+use rayon::prelude::*;
 
 pub fn get_words(args: &Args) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let mut words = Vec::new();
@@ -37,12 +38,19 @@ pub fn create_word_variants(word: &str) -> Vec<String> {
     // Generate all possible l33t combinations for this word
     let leet_variants = generate_all_leet_for_word(&lower);
 
-    // For each l33t variant, add different capitalizations
-    for leet_word in &leet_variants {
-        variants.push(leet_word.clone());                    // lowercase
-        variants.push(capitalize_word(leet_word));           // Capitalized
-        variants.push(leet_word.to_uppercase());            // UPPERCASE
-    }
+    // For each l33t variant, add different capitalizations using parallel processing
+    let capitalization_variants: Vec<String> = leet_variants
+        .par_iter() // Use parallel iterator for capitalization
+        .flat_map(|leet_word| {
+            vec![
+                leet_word.clone(),                    // lowercase
+                capitalize_word(leet_word),           // Capitalized
+                leet_word.to_uppercase(),            // UPPERCASE
+            ]
+        })
+        .collect();
+
+    variants.extend(capitalization_variants);
 
     // Remove duplicates
     variants.sort();
@@ -97,9 +105,21 @@ fn generate_all_leet_for_word(word: &str) -> Vec<String> {
 }
 
 fn capitalize_word(word: &str) -> String {
-    let mut chars: Vec<char> = word.chars().collect();
-    if !chars.is_empty() {
-        chars[0] = chars[0].to_uppercase().next().unwrap_or(chars[0]);
+    if word.is_empty() {
+        return String::new();
     }
-    chars.into_iter().collect()
+
+    let mut chars = word.chars();
+    if let Some(first) = chars.next() {
+        let uppercase_first = first.to_uppercase().collect::<String>();
+        if uppercase_first.len() == 1 && uppercase_first.starts_with(first) {
+            // No change needed, use Cow to avoid allocation
+            word.to_string()
+        } else {
+            // Capitalization needed
+            uppercase_first + &chars.collect::<String>()
+        }
+    } else {
+        String::new()
+    }
 }

@@ -6,7 +6,7 @@ mod display;
 use clap::Parser;
 use args::Args;
 use words::get_words;
-use generator::generate_combinations_streaming;
+use generator::{generate_combinations_streaming, GeneratorConfig};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
@@ -24,8 +24,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Processing {} words...", words.len());
 
+    // Create generator configuration
+    let config = GeneratorConfig {
+        min_len,
+        max_len,
+        limit: args.limit,
+        output_file: args.output.clone(),
+        chunk_size: args.chunk_size,
+        quiet: args.quiet,
+        append: args.append,
+    };
+
     // Generate and write combinations incrementally
-    let count = generate_combinations_streaming(&words, min_len, max_len, args.limit, &args.output, args.chunk_size, args.quiet, args.append)?;
+    let count = generate_combinations_streaming(&words, &config)?;
 
     println!("Generated {} passwords to {}", count, args.output);
 

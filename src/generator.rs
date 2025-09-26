@@ -3,71 +3,117 @@ use crate::words::create_word_variants;
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::time::{Duration, Instant};
+use std::collections::HashSet;
 use itertools::Itertools;
+use rayon::prelude::*;
+
+#[derive(Debug, Clone)]
+pub struct GeneratorConfig {
+    pub min_len: usize,
+    pub max_len: usize,
+    pub limit: usize,
+    pub output_file: String,
+    pub chunk_size: usize,
+    pub quiet: bool,
+    pub append: bool,
+}
+
+// Resource limits to prevent overflow and excessive memory usage
+const MAX_WORD_VARIANTS: usize = 1000;
+const MAX_COMBINATION_SIZE: usize = 4;  // Reduced from 6 to prevent explosion
+const MAX_MEMORY_USAGE_MB: usize = 500;
+const MAX_HASHSET_SIZE: usize = 1_000_000;
 
 pub fn generate_combinations_streaming(
     words: &[String],
-    min_len: usize,
-    max_len: usize,
-    limit: usize,
-    output_file: &str,
-    chunk_size: usize,
-    quiet: bool,
-    append: bool,
+    config: &GeneratorConfig,
 ) -> Result<usize, Box<dyn std::error::Error>> {
 
-    let file = if append {
-        OpenOptions::new()
+    // Use atomic file operations with temporary file for safety
+    let (file, temp_path) = if config.append {
+        // For append mode, write directly to the file
+        (OpenOptions::new()
             .create(true)
             .append(true)
-            .open(output_file)?
+            .open(&config.output_file)?, None)
     } else {
-        File::create(output_file)?
+        // For overwrite mode, use temporary file for atomic operation
+        let temp_path = format!("{}.tmp.{}", config.output_file, std::process::id());
+        let file = File::create(&temp_path)?;
+        (file, Some(temp_path))
     };
     let mut writer = BufWriter::new(file);
     let mut total_count = 0;
-    let mut chunk_buffer = Vec::with_capacity(chunk_size);
+    let mut chunk_buffer = Vec::with_capacity(config.chunk_size);
+    let mut seen_passwords = HashSet::with_capacity(config.chunk_size * 2);
+
+    // Reserve string capacity to reduce allocations
+    chunk_buffer.reserve(config.chunk_size);
 
     let start_time = Instant::now();
     let mut last_update = Instant::now();
     let mut first_display = true;
 
-    // Create l33t variants for each word
+    // Create l33t variants for each word with limits using parallel processing
     let word_variants: Vec<Vec<String>> = words
-        .iter()
-        .map(|word| create_word_variants(word))
+        .par_iter() // Use parallel iterator
+        .map(|word| {
+            let variants = create_word_variants(word);
+            // Limit variants per word to prevent explosion
+            if variants.len() > MAX_WORD_VARIANTS {
+                variants.into_iter().take(MAX_WORD_VARIANTS).collect()
+            } else {
+                variants
+            }
+        })
         .collect();
 
+    // Early termination if word list is too large
+    if words.len() > 50 {
+        eprintln!("Warning: Large word list ({} words) may cause excessive memory usage", words.len());
+        if words.len() > 100 {
+            return Err("Word list too large (>100 words). Please reduce input size.".into());
+        }
+    }
+
     // Estimate total combinations for progress calculation
-    let estimated_total = estimate_total_combinations(&word_variants, words.len().min(6));
+    let estimated_total = estimate_total_combinations(&word_variants, words.len().min(MAX_COMBINATION_SIZE));
 
     // Generate combinations by target length (length-first approach)
-    'outer: for target_length in min_len..=max_len {
+    'outer: for target_length in config.min_len..=config.max_len {
         // Generate combinations that result in exactly target_length
         let combinations_for_length = generate_combinations_for_length(
             &word_variants,
-            words.len().min(6),
+            words.len().min(MAX_COMBINATION_SIZE),
             target_length
         );
 
         for combo in combinations_for_length {
-            chunk_buffer.push(combo);
+            // Only add if not seen before (deduplication)
+            if seen_passwords.insert(combo.clone()) {
+                chunk_buffer.push(combo);
 
-            // Write chunk when buffer is full
-            if chunk_buffer.len() >= chunk_size {
-                write_chunk(&mut writer, &chunk_buffer)?;
-                total_count += chunk_buffer.len();
-                chunk_buffer.clear();
+                // Write chunk when buffer is full
+                if chunk_buffer.len() >= config.chunk_size {
+                    write_chunk(&mut writer, &chunk_buffer)?;
+                    total_count += chunk_buffer.len();
+                    chunk_buffer.clear();
 
-                // Update status display (only every 2 seconds)
-                if !quiet && (first_display || last_update.elapsed() >= Duration::from_secs(2)) {
-                    update_status_display(total_count, &start_time, output_file, words, target_length, first_display, estimated_total);
-                    last_update = Instant::now();
-                    first_display = false;
-                }
+                    // Clear seen_passwords periodically to manage memory with bounds check
+                    if seen_passwords.len() > MAX_HASHSET_SIZE.min(config.chunk_size * 10) {
+                        seen_passwords.clear();
+                    }
 
-                if limit > 0 && total_count >= limit {
-                    break 'outer;
+                    // Update status display (only every 2 seconds)
+                    if !config.quiet && (first_display || last_update.elapsed() >= Duration::from_secs(2)) {
+                        update_status_display(total_count, &start_time, &config.output_file, words, target_length, first_display, estimated_total);
+                        last_update = Instant::now();
+                        first_display = false;
+                    }
+
+                    if config.limit > 0 && total_count >= config.limit {
+                        break 'outer;
+                    }
                 }
             }
         }
@@ -80,6 +126,13 @@ pub fn generate_combinations_streaming(
     }
 
     writer.flush()?;
+    drop(writer); // Ensure file is closed before renaming
+
+    // Atomically move temporary file to final location
+    if let Some(temp_path) = temp_path {
+        std::fs::rename(&temp_path, &config.output_file)?;
+    }
+
     Ok(total_count)
 }
 
@@ -88,7 +141,7 @@ fn generate_combinations_for_length(
     max_combo_size: usize,
     target_length: usize,
 ) -> Vec<String> {
-    let mut results = Vec::new();
+    let mut results_set = HashSet::new();
     let special_chars = ['!', '@', '#', '$', '%'];
 
     // Try different combo sizes (1 to max_combo_size words)
@@ -109,7 +162,7 @@ fn generate_combinations_for_length(
                 // Add combinations that are exactly target_length
                 for combo in temp_combinations {
                     if combo.len() == target_length {
-                        results.push(combo.clone());
+                        results_set.insert(combo.clone());
                     }
 
                     // Try adding special characters to reach target_length
@@ -127,7 +180,7 @@ fn generate_combinations_for_length(
                                                 padded.push(special);
                                             }
                                             if padded.len() == target_length {
-                                                results.push(padded);
+                                                results_set.insert(padded);
                                             }
                                         }
                                     }
@@ -140,7 +193,7 @@ fn generate_combinations_for_length(
                             for &special in &special_chars {
                                 let padded = format!("{}{}", special, combo);
                                 if padded.len() == target_length {
-                                    results.push(padded);
+                                    results_set.insert(padded);
                                 }
                             }
                         }
@@ -150,9 +203,9 @@ fn generate_combinations_for_length(
         }
     }
 
-    // Remove duplicates and sort
+    // Convert HashSet to sorted Vec for consistent output
+    let mut results: Vec<String> = results_set.into_iter().collect();
     results.sort();
-    results.dedup();
     results
 }
 
@@ -177,9 +230,11 @@ fn generate_cartesian_product_for_length(
         }
 
         for variant in groups[pos] {
-            let new_combination = current.clone() + variant;
-            // Prune early if we've already exceeded target length
-            if new_combination.len() <= target_length {
+            // Pre-check length before string allocation
+            if current.len() + variant.len() <= target_length {
+                let mut new_combination = String::with_capacity(current.len() + variant.len() + 10); // Extra capacity for efficiency
+                new_combination.push_str(&current);
+                new_combination.push_str(variant);
                 cartesian_recursive(groups, pos + 1, new_combination, results, target_length);
             }
         }
@@ -208,16 +263,16 @@ fn estimate_total_combinations(word_variants: &[Vec<String>], max_combo_size: us
 
         // Average number of variants per word (more conservative estimate)
         let avg_variants = word_variants.iter()
-            .map(|variants| variants.len().min(50)) // Cap variants per word to 50
+            .map(|variants| variants.len().min(MAX_WORD_VARIANTS / 10)) // More conservative cap
             .sum::<usize>() / word_variants.len().max(1);
 
-        // Total combinations for this size
+        // Total combinations for this size with enhanced overflow protection
         let mut size_total = combinations.saturating_mul(permutations);
 
-        // Apply variants with overflow protection
+        // Apply variants with stricter overflow protection
         for _ in 0..combo_size {
-            if size_total > 10_000_000 / avg_variants {
-                size_total = 10_000_000; // Cap to prevent overflow
+            if size_total > 1_000_000 / avg_variants.max(1) {
+                size_total = 1_000_000; // Much more conservative cap
                 break;
             }
             size_total = size_total.saturating_mul(avg_variants);
@@ -225,11 +280,12 @@ fn estimate_total_combinations(word_variants: &[Vec<String>], max_combo_size: us
 
         total = total.saturating_add(size_total);
 
-        // Cap total to reasonable limit based on combo size
+        // Much more conservative caps to prevent memory exhaustion
         let max_for_size = match combo_size {
-            1..=2 => 10_000_000,
-            3..=4 => 100_000_000,
-            _ => 1_000_000_000,
+            1 => 100_000,
+            2 => 1_000_000,
+            3 => 5_000_000,
+            _ => 10_000_000, // Hard cap for 4+ word combinations
         };
 
         if total > max_for_size {
@@ -237,7 +293,7 @@ fn estimate_total_combinations(word_variants: &[Vec<String>], max_combo_size: us
         }
     }
 
-    total.max(1000000) // Ensure minimum reasonable value
+    total.clamp(10_000, 50_000_000) // Reasonable bounds
 }
 
 fn binomial_coefficient(n: usize, k: usize) -> usize {
