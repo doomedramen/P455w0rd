@@ -149,45 +149,33 @@ fn generate_combinations_streaming(
     // Estimate total combinations for progress calculation
     let estimated_total = estimate_total_combinations(&word_variants, words.len().min(6));
 
-    // Generate combinations for different lengths (1 to n words)
-    'outer: for combo_size in 1..=words.len().min(6) {
+    // Generate combinations by target length (length-first approach)
+    'outer: for target_length in min_len..=max_len {
+        // Generate combinations that result in exactly target_length
+        let combinations_for_length = generate_combinations_for_length(
+            &word_variants,
+            words.len().min(6),
+            target_length
+        );
 
-        // Get all combinations of indices
-        for combo_indices in (0..words.len()).combinations(combo_size) {
-            // Generate all permutations of these word groups
-            for perm in combo_indices.iter().permutations(combo_size) {
-                let perm_variants: Vec<&Vec<String>> = perm
-                    .iter()
-                    .map(|&&i| &word_variants[i])
-                    .collect();
+        for combo in combinations_for_length {
+            chunk_buffer.push(combo);
 
-                // Generate cartesian product and write in chunks
-                let mut temp_combinations = Vec::new();
-                generate_cartesian_product(&perm_variants, &mut temp_combinations, min_len, max_len);
+            // Write chunk when buffer is full
+            if chunk_buffer.len() >= chunk_size {
+                write_chunk(&mut writer, &chunk_buffer)?;
+                total_count += chunk_buffer.len();
+                chunk_buffer.clear();
 
-                // Apply padding and add to chunk buffer
-                let padded = apply_padding_and_filtering(temp_combinations, min_len, max_len);
+                // Update status display (only every 2 seconds)
+                if !quiet && (first_display || last_update.elapsed() >= Duration::from_secs(2)) {
+                    update_status_display(total_count, &start_time, output_file, words, target_length, first_display, estimated_total);
+                    last_update = Instant::now();
+                    first_display = false;
+                }
 
-                for combo in padded {
-                    chunk_buffer.push(combo);
-
-                    // Write chunk when buffer is full
-                    if chunk_buffer.len() >= chunk_size {
-                        write_chunk(&mut writer, &chunk_buffer)?;
-                        total_count += chunk_buffer.len();
-                        chunk_buffer.clear();
-
-                        // Update status display (only every 2 seconds)
-                        if !quiet && (first_display || last_update.elapsed() >= Duration::from_secs(2)) {
-                            update_status_display(total_count, &start_time, output_file, words, combo_size, first_display, estimated_total);
-                            last_update = Instant::now();
-                            first_display = false;
-                        }
-
-                        if limit > 0 && total_count >= limit {
-                            break 'outer;
-                        }
-                    }
+                if limit > 0 && total_count >= limit {
+                    break 'outer;
                 }
             }
         }
@@ -195,9 +183,6 @@ fn generate_combinations_streaming(
 
     // Write remaining combinations in buffer
     if !chunk_buffer.is_empty() {
-        // Sort and deduplicate final chunk
-        chunk_buffer.sort();
-        chunk_buffer.dedup();
         write_chunk(&mut writer, &chunk_buffer)?;
         total_count += chunk_buffer.len();
     }
@@ -278,6 +263,111 @@ fn capitalize_word(word: &str) -> String {
         chars[0] = chars[0].to_uppercase().next().unwrap_or(chars[0]);
     }
     chars.into_iter().collect()
+}
+
+fn generate_combinations_for_length(
+    word_variants: &[Vec<String>],
+    max_combo_size: usize,
+    target_length: usize,
+) -> Vec<String> {
+    let mut results = Vec::new();
+    let special_chars = ['!', '@', '#', '$', '%'];
+
+    // Try different combo sizes (1 to max_combo_size words)
+    for combo_size in 1..=max_combo_size.min(word_variants.len()) {
+        // Get all combinations of word indices
+        for combo_indices in (0..word_variants.len()).combinations(combo_size) {
+            // Generate all permutations of these word groups
+            for perm in combo_indices.iter().permutations(combo_size) {
+                let perm_variants: Vec<&Vec<String>> = perm
+                    .iter()
+                    .map(|&&i| &word_variants[i])
+                    .collect();
+
+                // Generate cartesian product for this permutation
+                let mut temp_combinations = Vec::new();
+                generate_cartesian_product_for_length(&perm_variants, &mut temp_combinations, target_length);
+
+                // Add combinations that are exactly target_length
+                for combo in temp_combinations {
+                    if combo.len() == target_length {
+                        results.push(combo.clone());
+                    }
+
+                    // Try adding special characters to reach target_length
+                    if combo.len() < target_length {
+                        let needed_chars = target_length - combo.len();
+
+                        // Add special chars at end (up to the needed amount)
+                        if needed_chars <= special_chars.len() {
+                            for chars_to_add in 1..=needed_chars {
+                                if chars_to_add <= special_chars.len() {
+                                    for special_combo in special_chars.iter().combinations(chars_to_add) {
+                                        for perm_special in special_combo.iter().permutations(chars_to_add) {
+                                            let mut padded = combo.clone();
+                                            for &&special in perm_special {
+                                                padded.push(special);
+                                            }
+                                            if padded.len() == target_length {
+                                                results.push(padded);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Add single special char at beginning
+                        if needed_chars == 1 {
+                            for &special in &special_chars {
+                                let padded = format!("{}{}", special, combo);
+                                if padded.len() == target_length {
+                                    results.push(padded);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Remove duplicates and sort
+    results.sort();
+    results.dedup();
+    results
+}
+
+fn generate_cartesian_product_for_length(
+    variant_groups: &[&Vec<String>],
+    results: &mut Vec<String>,
+    target_length: usize,
+) {
+    fn cartesian_recursive(
+        groups: &[&Vec<String>],
+        pos: usize,
+        current: String,
+        results: &mut Vec<String>,
+        target_length: usize,
+    ) {
+        if pos >= groups.len() {
+            // Only add if length is close to target (for padding consideration)
+            if current.len() <= target_length {
+                results.push(current);
+            }
+            return;
+        }
+
+        for variant in groups[pos] {
+            let new_combination = current.clone() + variant;
+            // Prune early if we've already exceeded target length
+            if new_combination.len() <= target_length {
+                cartesian_recursive(groups, pos + 1, new_combination, results, target_length);
+            }
+        }
+    }
+
+    cartesian_recursive(variant_groups, 0, String::new(), results, target_length);
 }
 
 fn generate_cartesian_product(
@@ -432,7 +522,7 @@ fn update_status_display(
     start_time: &Instant,
     output_file: &str,
     words: &[String],
-    current_combo_size: usize,
+    current_length: usize,
     is_first: bool,
     estimated_total: usize,
 ) {
@@ -491,7 +581,7 @@ fn update_status_display(
     println!("Time.Elapsed.....: {:.0}s", elapsed.as_secs_f64());
     println!("Time.ETA.........: {}", eta_formatted);
     println!("Words............: {} words", words.len());
-    println!("Combo.Size.......: {}-word combinations", current_combo_size);
+    println!("Current.Length...: {} character passwords", current_length);
     println!("Speed............: {:.0} P/s", rate);
     if show_progress {
         println!("Progress.........: {}/{} ({:.2}%)", total_count, estimated_total, progress_pct);
