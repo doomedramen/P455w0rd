@@ -210,12 +210,23 @@ fn create_word_variants(word: &str) -> Vec<String> {
     let mut variants = Vec::new();
     let lower = word.to_lowercase();
 
-    // Original word in different cases
-    variants.push(lower.clone());
-    variants.push(capitalize_word(&lower));
-    variants.push(word.to_uppercase());
+    // Generate all possible l33t combinations for this word
+    let leet_variants = generate_all_leet_for_word(&lower);
 
-    // Basic l33t variants - only most common single replacements
+    // For each l33t variant, add different capitalizations
+    for leet_word in &leet_variants {
+        variants.push(leet_word.clone());                    // lowercase
+        variants.push(capitalize_word(leet_word));           // Capitalized
+        variants.push(leet_word.to_uppercase());            // UPPERCASE
+    }
+
+    // Remove duplicates
+    variants.sort();
+    variants.dedup();
+    variants
+}
+
+fn generate_all_leet_for_word(word: &str) -> Vec<String> {
     let replacements = [
         ('a', '4'),
         ('e', '3'),
@@ -225,19 +236,40 @@ fn create_word_variants(word: &str) -> Vec<String> {
         ('s', '5'),
     ];
 
-    for &(from, to) in &replacements {
-        if lower.contains(from) {
-            let leet = lower.replace(from, &to.to_string());
-            variants.push(leet.clone());
-            variants.push(capitalize_word(&leet));
-            variants.push(leet.to_uppercase());
-        }
+    let chars: Vec<char> = word.chars().collect();
+    let mut results = Vec::new();
+
+    // Find all positions that can be replaced
+    let replaceable_positions: Vec<(usize, char, char)> = chars
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &ch)| {
+            replacements.iter()
+                .find(|&&(from, _)| from == ch)
+                .map(|&(_, to)| (i, ch, to))
+        })
+        .collect();
+
+    if replaceable_positions.is_empty() {
+        return vec![word.to_string()];
     }
 
-    // Remove duplicates
-    variants.sort();
-    variants.dedup();
-    variants
+    // Generate all combinations using bit patterns
+    let max_combinations = 1 << replaceable_positions.len();
+
+    for combination in 0..max_combinations {
+        let mut result_chars = chars.clone();
+
+        for (bit_pos, &(char_pos, _original, replacement)) in replaceable_positions.iter().enumerate() {
+            if (combination >> bit_pos) & 1 == 1 {
+                result_chars[char_pos] = replacement;
+            }
+        }
+
+        results.push(result_chars.iter().collect());
+    }
+
+    results
 }
 
 fn capitalize_word(word: &str) -> String {
@@ -281,7 +313,7 @@ fn generate_cartesian_product(
 }
 
 fn apply_padding_and_filtering(mut combinations: Vec<String>, min_len: usize, max_len: usize) -> Vec<String> {
-    let special_chars = vec!['!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '-', '_', '+', '='];
+    let special_chars = ['!', '@', '#', '$', '%'];
     let mut padded_combinations = Vec::new();
 
     for combo in combinations.drain(..) {
@@ -290,27 +322,18 @@ fn apply_padding_and_filtering(mut combinations: Vec<String>, min_len: usize, ma
             padded_combinations.push(combo.clone());
         }
 
-        // Add padding variants if needed
+        // Add simple padding variants if needed
         if combo.len() < max_len {
-            // Add special chars at the end
+            // Add ONE special char at the end
             for &special in &special_chars {
                 let padded = format!("{}{}", combo, special);
                 if padded.len() >= min_len && padded.len() <= max_len {
                     padded_combinations.push(padded);
                 }
-
-                // Add multiple special chars
-                for count in 2..=(max_len - combo.len()).min(3) {
-                    let padding: String = special.to_string().repeat(count);
-                    let padded = format!("{}{}", combo, padding);
-                    if padded.len() >= min_len && padded.len() <= max_len {
-                        padded_combinations.push(padded);
-                    }
-                }
             }
 
-            // Add special chars at the beginning
-            for &special in special_chars.iter().take(5) {
+            // Add ONE special char at the beginning
+            for &special in &special_chars {
                 let padded = format!("{}{}", special, combo);
                 if padded.len() >= min_len && padded.len() <= max_len {
                     padded_combinations.push(padded);
@@ -469,7 +492,7 @@ fn update_status_display(
     println!("Time.ETA.........: {}", eta_formatted);
     println!("Words............: {} words", words.len());
     println!("Combo.Size.......: {}-word combinations", current_combo_size);
-    println!("Speed............: {:.0} H/s", rate);
+    println!("Speed............: {:.0} P/s", rate);
     if show_progress {
         println!("Progress.........: {}/{} ({:.2}%)", total_count, estimated_total, progress_pct);
     } else {

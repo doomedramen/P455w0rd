@@ -54,23 +54,23 @@ help: release
 
 # Quick test with sample words
 demo: release
-    ./target/release/p455w0rd pikl test 123 --quick --limit 20
+    ./target/release/p455w0rd pikl test 123 --limit 50
 
 # Test append functionality
 test-append: release
     echo "=== Before ===" > test_append.txt
-    ./target/release/p455w0rd hello world --quick --limit 5 --output test_append.txt --append
+    ./target/release/p455w0rd hello world --limit 20 --output test_append.txt --append
     echo "=== Results ===" && cat test_append.txt && rm test_append.txt
 
-# Benchmark quick vs full mode
+# Benchmark small vs large wordlist
 benchmark: release
-    @echo "Testing quick mode (limited)..."
-    time ./target/release/p455w0rd hello world test --quick --limit 10000 --quiet --output /tmp/quick.txt
-    @echo "\nTesting full mode (limited)..."
-    time ./target/release/p455w0rd hello world test --limit 10000 --quiet --output /tmp/full.txt
-    @echo "\nQuick mode generated:" && wc -l /tmp/quick.txt
-    @echo "Full mode generated:" && wc -l /tmp/full.txt
-    @rm -f /tmp/quick.txt /tmp/full.txt
+    @echo "Testing small wordlist (3 words)..."
+    time ./target/release/p455w0rd hello world test --limit 5000 --quiet --output /tmp/small.txt
+    @echo "\nTesting larger wordlist (5 words)..."
+    time ./target/release/p455w0rd hello world test foo bar --limit 5000 --quiet --output /tmp/large.txt
+    @echo "\n3-word generated:" && wc -l /tmp/small.txt
+    @echo "5-word generated:" && wc -l /tmp/large.txt
+    @rm -f /tmp/small.txt /tmp/large.txt
 
 # Check for security issues with cargo-audit (install with: cargo install cargo-audit)
 audit:
