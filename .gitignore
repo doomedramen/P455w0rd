@@ -1,0 +1,69 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+*.pdb
+
+# Cargo lock file (uncomment if this is an application)
+# Cargo.lock
+
+# Generated documentation
+/doc/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# OS generated files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Temporary and test files
+/tmp/
+*.tmp
+*.temp
+test_*
+*_test.*
+!justfile
+
+# Logs
+*.log
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Backup files
+*.bak
+*.backup
+
+# Coverage reports
+tarpaulin-report.html
+cobertura.xml
+lcov.info
+
+# Profiling data
+*.profdata
+
+# Flamegraph files
+flamegraph.svg
+perf.data*
+
+# Benchmark results
+criterion/
+
+# Just build artifacts
+.just/
+
+# Hashcat specific files (if using for testing)
+*.hc22000
+*.hccapx
+*.cap
+*.pcap
+*.txt
