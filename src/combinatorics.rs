@@ -173,7 +173,7 @@ fn calculate_special_char_variants() -> u64 {
     total
 }
 
-fn calculate_actual_word_variants(word: &str) -> u64 {
+pub fn calculate_actual_word_variants(word: &str) -> u64 {
     let lower = word.to_lowercase();
 
     // Generate all possible l33t combinations for this word

@@ -10,7 +10,16 @@ rayon = "1.8"
 indicatif = "0.17"
 crossterm = "0.27"
 rand = "0.8"
+criterion = "0.5"
+
+[lib]
+name = "p455w0rd"
+path = "src/lib.rs"
 
 [[bin]]
 name = "p455w0rd"
 path = "src/main.rs"
+
+[[bench]]
+name = "combinatorial_bench"
+harness = false
