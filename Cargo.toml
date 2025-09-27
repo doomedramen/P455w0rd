@@ -9,6 +9,7 @@ itertools = "0.12"
 rayon = "1.8"
 indicatif = "0.17"
 crossterm = "0.27"
+rand = "0.8"
 
 [[bin]]
 name = "p455w0rd"

@@ -12,6 +12,9 @@ A high-performance Rust-based password list generator for security testing and p
 - **Streaming Output**: Memory-efficient chunked writing to handle large wordlists
 - **Progress Display**: Real-time status with ETA and generation rate
 - **Flexible Input**: Support for file input or command-line arguments
+- **Exact Combinatorial Mathematics**: Precisely calculates total combinations before generation
+- **Configurable Word Limits**: Control maximum number of words to combine (1 to unlimited)
+- **Safety Features**: File size estimation and user confirmation for large jobs
 
 ## Installation
 
@@ -46,6 +49,15 @@ cargo build --release
 # Limit number of passwords generated
 ./target/release/p455w0rd --limit 1000000 -i wordlist.txt
 
+# Control maximum number of words to combine
+./target/release/p455w0rd --max-words 3 admin password login
+
+# Skip special character padding
+./target/release/p455w0rd --no-special-chars admin password
+
+# Skip confirmation prompt for large jobs
+./target/release/p455w0rd --force --max-words 4 admin password login user
+
 # Quiet mode (no progress display)
 ./target/release/p455w0rd --quiet -i wordlist.txt
 
@@ -60,6 +72,9 @@ cargo build --release
 - `--wpa2`: Generate WPA2-compatible passwords (8-63 characters)
 - `--min-length <NUM>`: Minimum password length (default: 4)
 - `--max-length <NUM>`: Maximum password length (default: 20)
+- `--max-words <NUM>`: Maximum number of words to combine (0 = unlimited)
+- `--no-special-chars`: Skip special character padding
+- `--force`: Skip confirmation prompt for large generation jobs
 - `--limit <NUM>`: Maximum number of passwords to generate (0 = unlimited)
 - `--chunk-size <NUM>`: Buffer size for writing (default: 100000)
 - `--quiet`: Disable progress display
@@ -79,6 +94,26 @@ Words can be provided directly as arguments:
 ./target/release/p455w0rd admin password login user
 ```
 
+## Combinatorial Mathematics
+
+P455w0rd uses exact combinatorial mathematics to calculate the total number of passwords before generation begins. The formula is:
+
+```
+Total = word_permutations × 2^replaceable_chars × case_variants × padding_variants
+```
+
+Where:
+- **word_permutations**: All permutations of k distinct words from n available words (P(n,k))
+- **2^replaceable_chars**: Leet speak variations for each replaceable character (a→4, e→3, i→1, l→1, o→0, s→5)
+- **case_variants**: Up to 3 variations per word (lowercase, capitalized, uppercase)
+- **padding_variants**: Special character combinations (!@#$%) at beginning/end
+
+### Key Features:
+- **Exact Calculation**: Predetermined count matches final output exactly
+- **No Overcounting**: Handles duplicate removal for words starting with numbers
+- **Memory Efficient**: Calculates without generating all combinations first
+- **User Safety**: Shows estimated file size and requires confirmation for large jobs
+
 ## Output
 
 The tool generates password combinations with:
@@ -86,7 +121,7 @@ The tool generates password combinations with:
 - Leet speak variations (admin → 4dm1n)
 - Case variations (Admin, ADMIN, admin)
 - Special character padding (!admin, admin$, etc.)
-- Multiple word combinations up to 6 words
+- Multiple word combinations up to the specified --max-words limit
 
 ## Performance
 
@@ -94,6 +129,34 @@ The tool generates password combinations with:
 - **Parallel Processing**: Uses Rayon for CPU-intensive operations
 - **Progress Tracking**: Real-time status with generation rate and ETA
 - **Deduplication**: Automatic removal of duplicate passwords
+- **Exact Calculation**: Combinatorial analysis before generation begins
+
+## Testing
+
+### Integration Tests
+The project includes comprehensive integration tests that verify combinatorial accuracy:
+
+```bash
+./test_integration.sh
+```
+
+This script:
+- Generates random words of unpredictable lengths (2-10 characters)
+- Tests various scenarios (single words, multiple words, with/without special chars)
+- Verifies that calculated counts exactly match generated counts
+- Tests edge cases like words with no leetable characters
+
+### Unit Tests
+```bash
+cargo test
+```
+
+Runs comprehensive unit tests covering:
+- Combinatorial calculations
+- Leet variant generation
+- Case variation handling
+- Special character padding
+- Randomized test sequences
 
 ## Example Output
 
@@ -135,6 +198,7 @@ This tool is intended for legitimate security testing and research purposes only
 - `rayon`: Parallel processing
 - `indicatif`: Progress bars and status display
 - `crossterm`: Terminal manipulation
+- `rand`: Random number generation for testing
 
 ## License
 

@@ -41,6 +41,18 @@ pub struct Args {
     /// Append to output file instead of overwriting
     #[arg(long)]
     pub append: bool,
+
+    /// Maximum number of words to combine (default: unlimited)
+    #[arg(long, default_value = "0")]
+    pub max_words: usize,
+
+    /// Skip special character padding
+    #[arg(long)]
+    pub no_special_chars: bool,
+
+    /// Skip confirmation prompt for large generation jobs
+    #[arg(long)]
+    pub force: bool,
 }
 
 impl Args {
@@ -49,6 +61,14 @@ impl Args {
             (8, 63)
         } else {
             (self.min_length, self.max_length)
+        }
+    }
+
+    pub fn get_max_words(&self) -> usize {
+        if self.max_words == 0 {
+            usize::MAX // Unlimited
+        } else {
+            self.max_words
         }
     }
 }
